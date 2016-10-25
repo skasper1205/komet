@@ -34,7 +34,7 @@ FixCondiff::FixCondiff(LAMMPS *lmp, int narg, char **arg) :
 	strcpy(string,arg[3]);*/
 
 	fp = fopen( "out_file.txt", "w" );
-	fprintf(fp, arg[3]);
+	//fprintf(fp, arg[3]);       //writes that argument in file
 	fclose(fp);
 
 }
@@ -51,5 +51,10 @@ int FixCondiff::setmask()
   return mask;
 }
 
-
+void FixCondiff::end_of_step()
+{
+	fp = fopen( "out_file.txt", "w" );
+	fprintf(fp, "das auch");     //writes "das auch" in file in last step of program
+	fclose(fp);
+}
 

@@ -24,6 +24,7 @@ class FixCondiff : public Fix {
 	FixCondiff(class LAMMPS *, int, char **);
 	~FixCondiff();
 	int setmask();
+	void end_of_step();
 
 	FILE *fp;
     char *string;
