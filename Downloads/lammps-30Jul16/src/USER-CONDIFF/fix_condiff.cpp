@@ -27,15 +27,23 @@ using namespace FixConst;
 FixCondiff::FixCondiff(LAMMPS *lmp, int narg, char **arg) :
 		Fix(lmp, narg, arg)
 {
+	if (narg < 4) error->all(FLERR, "Illegal fix condiff command");
+
+	/*int n = strlen(arg[3]) + 1; //saves 4th argument of script in a string
+	string = new char[n];
+	strcpy(string,arg[3]);*/
+
 	fp = fopen( "out_file.txt", "w" );
-	fprintf(fp, "Constructor");
+	fprintf(fp, arg[3]);
 	fclose(fp);
+
 }
 
 FixCondiff::~FixCondiff()
 {
 
 }
+
 int FixCondiff::setmask()
 {
   int mask = 0;

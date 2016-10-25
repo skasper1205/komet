@@ -7,26 +7,29 @@
 
 #ifdef FIX_CLASS
 
-FixStyle(condiff, FixCondiff) //This registers this fix class with LAMMPS
+FixStyle(condiff, FixCondiff)
 
 #else
 
-#ifndef LMP_FIX_CONDIFF_H     //  These are header guards.
+#ifndef LMP_FIX_CONDIFF_H
 #define LMP_FIX_CONDIFF_H
 
-#include "fix.h"          // Must have this because our FixCONDIFF is derived from Fix...
+#include "fix.h"
 
 namespace LAMMPS_NS {
 
 class FixCondiff : public Fix {
-  // The contents of your class go here i.e. member variables and methods etc...
+
   public:
 	FixCondiff(class LAMMPS *, int, char **);
 	~FixCondiff();
 	int setmask();
 
 	FILE *fp;
+    char *string;
 
+  private:
+    int me;
 
 };
 
