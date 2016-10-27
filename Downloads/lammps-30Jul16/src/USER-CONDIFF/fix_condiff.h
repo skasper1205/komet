@@ -25,9 +25,16 @@ class FixCondiff : public Fix {
 	~FixCondiff();
 	int setmask();
 	void end_of_step();
+	void kspace_check();
+    void pppm_check();
 
-	FILE *fp;
+    FILE *f;
+    FILE *p;
+    char data[100];
+    char * n;
+    //int **array;
     char *string;
+    int temp;
 
   private:
     int me;
