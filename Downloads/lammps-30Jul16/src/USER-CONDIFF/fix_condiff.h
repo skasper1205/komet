@@ -24,20 +24,12 @@ class FixCondiff : public Fix {
 	FixCondiff(class LAMMPS *, int, char **);
 	~FixCondiff();
 	int setmask();
-	void end_of_step();
+	void post_force();
 	void kspace_check();
     void pppm_check();
 
-    FILE *f;
-    FILE *p;
-    char data[100];
-    char * n;
-    //int **array;
-    char *string;
-    int temp;
-
-  private:
-    int me;
+    int nx_pppm, ny_pppm, nz_pppm;
+    int order;
 
 };
 
