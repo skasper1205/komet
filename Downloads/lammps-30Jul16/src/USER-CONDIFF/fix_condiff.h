@@ -31,6 +31,8 @@ class FixCondiff : public Fix {
     int nx_pppm, ny_pppm, nz_pppm;
     int order;
 
+    FILE *fp;
+
 };
 
 
