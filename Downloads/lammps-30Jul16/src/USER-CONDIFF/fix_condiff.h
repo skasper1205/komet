@@ -72,20 +72,18 @@ class FixCondiff : public Fix {
 
     FFT_SCALAR **rho1d,**rho_coeff,**drho1d,**drho_coeff; //compute_rho1d
 
-    FILE *fp;
-
     int nxlo_in,nylo_in,nzlo_in,nxhi_in,nyhi_in,nzhi_in;
     int nxlo_out,nylo_out,nzlo_out,nxhi_out,nyhi_out,nzhi_out;
     int nxlo_ghost,nxhi_ghost,nylo_ghost,nyhi_ghost,nzlo_ghost,nzhi_ghost;
     int nxlo_fft,nylo_fft,nzlo_fft,nxhi_fft,nyhi_fft,nzhi_fft;
     int ngrid,nfft,nfft_both;
 
-    class FFT3d *fft1,*fft2;
-    class Remap *remap;
     class GridComm *cg;
     class GridComm *cg_peratom;
 
-    FFT_SCALAR ***density_brick;
+    FFT_SCALAR ****density_brick;
+    FFT_SCALAR ****density_brick_counter;
+    double **help_v;
     /*FFT_SCALAR ***vdx_brick,***vdy_brick,***vdz_brick;
     FFT_SCALAR ***u_brick;
     FFT_SCALAR ***v0_brick,***v1_brick,***v2_brick;
@@ -98,6 +96,8 @@ class FixCondiff : public Fix {
 
     int order_allocated;
     double *gf_b;
+
+    int jgroup,groupbit_condiff;
 };
 
 
