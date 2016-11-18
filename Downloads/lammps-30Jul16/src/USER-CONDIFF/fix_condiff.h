@@ -83,7 +83,9 @@ class FixCondiff : public Fix {
 
     FFT_SCALAR ****density_brick;
     FFT_SCALAR ****density_brick_counter;
+    FFT_SCALAR ****density_brick_force;
     double **help_v;
+    double **help_f;
     /*FFT_SCALAR ***vdx_brick,***vdy_brick,***vdz_brick;
     FFT_SCALAR ***u_brick;
     FFT_SCALAR ***v0_brick,***v1_brick,***v2_brick;
