@@ -239,8 +239,7 @@ void FixCondiff::make_rho()
 			compute_rho1d(dx,dy,dz);
 
 			for (int j = 0; j < 3; j++) {
-				//printf("%f\n",v[i][j]);
-				//f[i][j] -= help_f[i][j];
+				f[i][j] -= help_f[i][j];
 				z0 = delvolinv;
 				for (n = nlower; n <= nupper; n++) {
 					mz = n+nz;
@@ -269,8 +268,7 @@ void FixCondiff::make_rho()
 			compute_rho1d(dx,dy,dz);
 
 			for (int j = 0; j < 3; j++) {
-				//printf("%f\n",v[i][j]);
-				v[i][j] = 0;
+				v[i][j] -= help_v[i][j];
 				z0 = delvolinv;
 				for (n = nlower; n <= nupper; n++) {
 					mz = n+nz;
@@ -326,7 +324,6 @@ void FixCondiff::reverse_make_rho()
 
 			for(int j = 0; j < 3; j++){
 				help_v[i][j] = 0;
-				//v[i][j] = 0;
 				for (n = nlower; n <= nupper; n++) {
 					mz = n+nz;
 					z0 = rho1d[2][n];
@@ -336,13 +333,13 @@ void FixCondiff::reverse_make_rho()
 						for (l = nlower; l <= nupper; l++) {
 							mx = l+nx;
 							x0 = y0*rho1d[0][l];
-
-								help_v[i][j] += (density_brick[j][mz][my][mx]);
-
+							if(density_brick_counter[j][mz][my][mx] != 0){
+								help_v[i][j] += (density_brick[j][mz][my][mx]*x0/density_brick_counter[j][mz][my][mx]);
+							}
 						}
 					}
 				}
-				v[i][j] = help_v[i][j];
+				v[i][j] += help_v[i][j];
 			}
 		}
 		if (mask[i] & groupbit){
@@ -367,15 +364,15 @@ void FixCondiff::reverse_make_rho()
 						for (l = nlower; l <= nupper; l++) {
 							mx = l+nx;
 							x0 = y0*rho1d[0][l];
-							//if(density_brick_counter[j][mz][my][mx] !=0){
-							//	help_f[i][j] += (density_brick_force[j][mz][my][mx]/density_brick_counter[j][mz][my][mx]);
-							//}else{
+							if(density_brick_counter[j][mz][my][mx] !=0){
+								help_f[i][j] += (density_brick_force[j][mz][my][mx]*x0/density_brick_counter[j][mz][my][mx]);
+							}else{
 
-							//}
+							}
 						}
 					}
 				}
-				//f[i][j] += help_f[i][j];
+				f[i][j] += help_f[i][j];
 			}
 		}
 	}
@@ -623,4 +620,3 @@ void FixCondiff::pppm_check()	//check if pppm computation is used
 		error->all(FLERR, "Not using pppm computations");
 
 }
-
