@@ -54,6 +54,7 @@ FixCondiff::FixCondiff(LAMMPS *lmp, int narg, char **arg) :
 
 	help_v = NULL;
 	help_f = NULL;
+	help_x = NULL;
 
 	gf_b = NULL;
 	rho1d = rho_coeff = drho1d = drho_coeff = NULL;
@@ -226,7 +227,7 @@ void FixCondiff::make_rho()
 		}
 	}
 
-	for (int i = 0; i < nlocal; i++) { //take velocity of dpd-particles
+	for (int i = 0; i < nlocal; i++) { //take velocity of dpd-particles and map them on grid
 
 		if (mask[i] & groupbit){
 			nx = part2grid[i][0];
@@ -239,7 +240,7 @@ void FixCondiff::make_rho()
 			compute_rho1d(dx,dy,dz);
 
 			for (int j = 0; j < 3; j++) {
-				f[i][j] -= help_f[i][j];
+				//f[i][j] -= help_f[i][j];
 				z0 = delvolinv;
 				for (n = nlower; n <= nupper; n++) {
 					mz = n+nz;
@@ -249,15 +250,15 @@ void FixCondiff::make_rho()
 						x0 = y0*rho1d[1][m];
 						for (l = nlower; l <= nupper; l++) {
 							mx = l+nx;
-							density_brick[j][mz][my][mx] += x0*rho1d[0][l]* v[i][j];
-							density_brick_counter[j][mz][my][mx] += x0*rho1d[0][l];
-							//fprintf(fp, "%f\t", density_brick[j][mz][my][mx]);
-						}//fprintf(fp, "\n");
+							density_brick[j][mz][my][mx] += x0*rho1d[0][l]*v[i][j];
+							density_brick_counter[j][mz][my][mx]+=x0*rho1d[0][l];
+
+						}
 					}
 				}
 			}
 		}
-		if (mask[i] & groupbit_condiff){ //take force of condiff-particles
+		/*if (mask[i] & groupbit_condiff){ //take force of condiff-particles and map them on grid
 			nx = part2grid[i][0];
 			ny = part2grid[i][1];
 			nz = part2grid[i][2];
@@ -268,7 +269,7 @@ void FixCondiff::make_rho()
 			compute_rho1d(dx,dy,dz);
 
 			for (int j = 0; j < 3; j++) {
-				v[i][j] -= help_v[i][j];
+				//v[i][j] -= help_v[i][j];
 				z0 = delvolinv;
 				for (n = nlower; n <= nupper; n++) {
 					mz = n+nz;
@@ -284,7 +285,7 @@ void FixCondiff::make_rho()
 					}
 				}
 			}
-		}
+		}*/
 	}
 }
 
@@ -312,7 +313,7 @@ void FixCondiff::reverse_make_rho()
 
 	for (int i = 0; i < nlocal; i++) {
 
-		if (mask[i] & groupbit_condiff){
+		if (mask[i] & groupbit_condiff){ //remap velocities on condiff-particles (pseudo-ions)
 			nx = part2grid[i][0];
 			ny = part2grid[i][1];
 			nz = part2grid[i][2];
@@ -333,16 +334,23 @@ void FixCondiff::reverse_make_rho()
 						for (l = nlower; l <= nupper; l++) {
 							mx = l+nx;
 							x0 = y0*rho1d[0][l];
-							if(density_brick_counter[j][mz][my][mx] != 0){
+							if(density_brick_counter[j][mz][my][mx] !=0) {
 								help_v[i][j] += (density_brick[j][mz][my][mx]*x0/density_brick_counter[j][mz][my][mx]);
 							}
 						}
 					}
 				}
-				v[i][j] += help_v[i][j];
+				//printf("%f \t",help_v[i][j]);
+
+				help_x[i][j] = x[i][j];
+
+				x[i][j] += help_v[i][j]*0.05 ;//+ f[i][j]*0.05*0.26;     //euler step
+
+				v[i][j] = (x[i][j]-help_x[i][j])/0.05; //assign velocity to pseudi-ions
+
 			}
 		}
-		if (mask[i] & groupbit){
+		/*if (mask[i] & groupbit){
 			nx = part2grid[i][0];
 			ny = part2grid[i][1];
 			nz = part2grid[i][2];
@@ -365,16 +373,17 @@ void FixCondiff::reverse_make_rho()
 							mx = l+nx;
 							x0 = y0*rho1d[0][l];
 							if(density_brick_counter[j][mz][my][mx] !=0){
-								help_f[i][j] += (density_brick_force[j][mz][my][mx]*x0/density_brick_counter[j][mz][my][mx]);
+								help_f[i][j] += (density_brick_force[j][mz][my][mx]*x0*density_brick_counter[j][mz][my][mx]);
 							}else{
 
 							}
 						}
 					}
 				}
+				printf("%f \n",help_f[i][j]);
 				f[i][j] += help_f[i][j];
 			}
-		}
+		}*/
 	}
 }
 
@@ -573,6 +582,7 @@ void FixCondiff::deallocate()
 
 	memory->destroy(help_v);
 	memory->destroy(help_f);
+	memory->destroy(help_x);
 
 }
 void FixCondiff::allocate()
@@ -593,6 +603,7 @@ void FixCondiff::allocate()
 
 	memory->create(help_v,atom->nmax,3,"condiff:help_v");
 	memory->create(help_f,atom->nmax,3,"condiff:help_f");
+	memory->create(help_x,atom->nmax,3,"condiff:help_x");
   // create ghost grid object for rho and electric field communication
 
 	int (*procneigh)[2] = comm->procneigh;
