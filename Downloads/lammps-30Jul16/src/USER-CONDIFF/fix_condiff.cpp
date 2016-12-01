@@ -19,6 +19,10 @@
 #include "memory.h"
 #include "error.h"
 #include "group.h"
+#include "update.h"
+#include "random_mars.h"
+#include "compute.h"
+#include "modify.h"
 
 #include "math_const.h"
 #include "math_special.h"
@@ -39,6 +43,8 @@ using namespace MathSpecial;
 #define ONEF  1.0
 #endif
 
+enum{NOBIAS,BIAS};
+
 //The class constructor.
 FixCondiff::FixCondiff(LAMMPS *lmp, int narg, char **arg) :
 		Fix(lmp, narg, arg)
@@ -48,6 +54,8 @@ FixCondiff::FixCondiff(LAMMPS *lmp, int narg, char **arg) :
 	MPI_Comm_rank(world,&me);
 	MPI_Comm_size(world,&nprocs);
 
+
+
 	density_brick  = NULL;
 	density_brick_counter = NULL;
 	density_brick_force = NULL;
@@ -55,6 +63,8 @@ FixCondiff::FixCondiff(LAMMPS *lmp, int narg, char **arg) :
 	help_v = NULL;
 	help_f = NULL;
 	help_x = NULL;
+
+	rand = NULL;
 
 	gf_b = NULL;
 	rho1d = rho_coeff = drho1d = drho_coeff = NULL;
@@ -75,6 +85,30 @@ FixCondiff::FixCondiff(LAMMPS *lmp, int narg, char **arg) :
 	kspace_check();
 	pppm_check();
 
+	D = 1.0;
+	//optinal args
+	int iarg = 4;
+	while (iarg < narg) {
+		D = atof(arg[iarg]);
+		iarg++;
+	}
+	printf("diffusion coefficient = %f\n",D);
+	int seed = 11111 ;
+	random = new RanMars(lmp,seed + comm->me);
+
+	int n = strlen(id) + 6;
+	id_temp = new char[n];
+	strcpy(id_temp,id);
+	strcat(id_temp,"_temp");
+
+	char **newarg = new char*[3];
+	newarg[0] = id_temp;
+	newarg[1] = group->names[igroup];
+	newarg[2] = (char *) "temp";
+	modify->add_compute(3,newarg);
+	delete [] newarg;
+	tflag = 1;
+
 }
 
 FixCondiff::~FixCondiff()
@@ -82,6 +116,8 @@ FixCondiff::~FixCondiff()
 	  deallocate();
 	  memory->destroy(part2grid);
 	  memory->destroy(density_brick);
+
+	  if (tflag) modify->delete_compute(id_temp);
 }
 
 int FixCondiff::setmask()	//where algorithm steps in
@@ -98,6 +134,12 @@ void FixCondiff::post_force(int vspace)
 	particle_map();
     make_rho();
     reverse_make_rho();
+    apply_boundary_conditions();
+
+}
+
+void FixCondiff::end_of_step(){
+
 }
 
 
@@ -121,6 +163,22 @@ void FixCondiff::setup()
 	delzinv = nz_pppm/zprd_slab;
 
 	delvolinv = delxinv*delyinv*delzinv;
+	dt = update->dt;
+	wienerConst = sqrt(2*D*dt);
+
+
+	int icompute = modify->find_compute(id_temp);
+	if (icompute < 0)
+	  error->all(FLERR,"Temperature ID for fix temp/berendsen does not exist");
+	temperature = modify->compute[icompute];
+
+	if (temperature->tempbias) which = BIAS;
+	else which = NOBIAS;
+
+	T = temperature->compute_scalar();
+
+	//printf("boxhix = %f\n",boxhi[0]);
+
 }
 
 void FixCondiff::setup_grid()
@@ -223,7 +281,7 @@ void FixCondiff::make_rho()
 						density_brick_force[j][mz][my][mx] = 0;
 					}
 				}
-			}//printf("reverse %f\n",v[i][j]);
+			}
 		}
 	}
 
@@ -258,7 +316,7 @@ void FixCondiff::make_rho()
 				}
 			}
 		}
-		/*if (mask[i] & groupbit_condiff){ //take force of condiff-particles and map them on grid
+		if (mask[i] & groupbit_condiff){ //take force of condiff-particles and map them on grid
 			nx = part2grid[i][0];
 			ny = part2grid[i][1];
 			nz = part2grid[i][2];
@@ -269,7 +327,6 @@ void FixCondiff::make_rho()
 			compute_rho1d(dx,dy,dz);
 
 			for (int j = 0; j < 3; j++) {
-				//v[i][j] -= help_v[i][j];
 				z0 = delvolinv;
 				for (n = nlower; n <= nupper; n++) {
 					mz = n+nz;
@@ -280,12 +337,12 @@ void FixCondiff::make_rho()
 						for (l = nlower; l <= nupper; l++) {
 							mx = l+nx;
 							density_brick_force[j][mz][my][mx] += x0*rho1d[0][l]*f[i][j];
-							//fprintf(fp, "%f\t", density_brick[j][mz][my][mx]);
-						}//fprintf(fp, "\n");
+							//density_brick[j][mz][my][mx] += x0*rho1d[0][l]*v[i][j];
+						}
 					}
 				}
 			}
-		}*/
+		}
 	}
 }
 
@@ -304,6 +361,8 @@ void FixCondiff::reverse_make_rho()
   // (nx,ny,nz) = global coords of grid pt to "lower left" of charge
   // (dx,dy,dz) = distance to "lower left" grid pt
   // (mx,my,mz) = global coords of moving stencil pt
+
+
 
 	double **v = atom->v;
 	double **x = atom->x;
@@ -324,7 +383,10 @@ void FixCondiff::reverse_make_rho()
 			compute_rho1d(dx,dy,dz);
 
 			for(int j = 0; j < 3; j++){
-				help_v[i][j] = 0;
+
+				rand[j] = random->gaussian();
+
+				v[i][j] = 0;
 				for (n = nlower; n <= nupper; n++) {
 					mz = n+nz;
 					z0 = rho1d[2][n];
@@ -335,22 +397,16 @@ void FixCondiff::reverse_make_rho()
 							mx = l+nx;
 							x0 = y0*rho1d[0][l];
 							if(density_brick_counter[j][mz][my][mx] !=0) {
-								help_v[i][j] += (density_brick[j][mz][my][mx]*x0/density_brick_counter[j][mz][my][mx]);
+								v[i][j] += (density_brick[j][mz][my][mx]*x0/density_brick_counter[j][mz][my][mx]);
 							}
 						}
 					}
 				}
-				//printf("%f \t",help_v[i][j]);
-
-				help_x[i][j] = x[i][j];
-
-				x[i][j] += help_v[i][j]*0.05 ;//+ f[i][j]*0.05*0.26;     //euler step
-
-				v[i][j] = (x[i][j]-help_x[i][j])/0.05; //assign velocity to pseudi-ions
-
+				x[i][j] += v[i][j]*dt + f[i][j]*dt*D/T + wienerConst*rand[j];     //euler step
+				//printf("%f\n",rand[j]);
 			}
 		}
-		/*if (mask[i] & groupbit){
+		if (mask[i] & groupbit){
 			nx = part2grid[i][0];
 			ny = part2grid[i][1];
 			nz = part2grid[i][2];
@@ -361,8 +417,8 @@ void FixCondiff::reverse_make_rho()
 			compute_rho1d(dx,dy,dz);
 
 			for(int j = 0; j < 3; j++){
+				//f[i][j] -= help_f[i][j];
 				help_f[i][j] = 0;
-
 				for (n = nlower; n <= nupper; n++) {
 					mz = n+nz;
 					z0 = rho1d[2][n];
@@ -373,17 +429,14 @@ void FixCondiff::reverse_make_rho()
 							mx = l+nx;
 							x0 = y0*rho1d[0][l];
 							if(density_brick_counter[j][mz][my][mx] !=0){
-								help_f[i][j] += (density_brick_force[j][mz][my][mx]*x0*density_brick_counter[j][mz][my][mx]);
-							}else{
-
+								help_f[i][j] += (density_brick_force[j][mz][my][mx]*x0/density_brick_counter[j][mz][my][mx]);
 							}
 						}
 					}
 				}
-				printf("%f \n",help_f[i][j]);
 				f[i][j] += help_f[i][j];
 			}
-		}*/
+		}
 	}
 }
 
@@ -583,6 +636,7 @@ void FixCondiff::deallocate()
 	memory->destroy(help_v);
 	memory->destroy(help_f);
 	memory->destroy(help_x);
+	memory->destroy(rand);
 
 }
 void FixCondiff::allocate()
@@ -604,6 +658,8 @@ void FixCondiff::allocate()
 	memory->create(help_v,atom->nmax,3,"condiff:help_v");
 	memory->create(help_f,atom->nmax,3,"condiff:help_f");
 	memory->create(help_x,atom->nmax,3,"condiff:help_x");
+
+	memory->create(rand,3,"condiff:rand");
   // create ghost grid object for rho and electric field communication
 
 	int (*procneigh)[2] = comm->procneigh;
@@ -630,4 +686,31 @@ void FixCondiff::pppm_check()	//check if pppm computation is used
 	if (!force->pair->pppmflag)
 		error->all(FLERR, "Not using pppm computations");
 
+}
+
+void FixCondiff::apply_boundary_conditions()
+{
+	double **x = atom->x;
+	int nlocal = atom->nlocal;
+	int *mask = atom->mask;
+
+	double *boxlo, *boxhi;
+	boxlo = domain->boxlo;
+	boxhi = domain->boxhi;
+
+	double *prd;
+	prd = domain->prd;
+
+	for (int i = 0; i < nlocal; i++) {
+
+		if(mask[i] & groupbit_condiff){
+			while(x[i][0] > boxhi[0]) x[i][0] -= prd[0];
+			while(x[i][1] > boxhi[1]) x[i][1] -= prd[1];
+			while(x[i][2] > boxhi[2]) x[i][2] -= prd[2];
+
+			while(x[i][0] < boxlo[0]) x[i][0] += prd[0];
+			while(x[i][1] < boxlo[1]) x[i][1] += prd[1];
+			while(x[i][2] < boxlo[2]) x[i][2] += prd[2];
+		}
+	}
 }

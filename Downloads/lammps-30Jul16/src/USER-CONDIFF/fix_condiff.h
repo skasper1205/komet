@@ -36,8 +36,10 @@ class FixCondiff : public Fix {
 	~FixCondiff();
 	int setmask();
 	void post_force(int);
+	void end_of_step();
 	void kspace_check();
     void pppm_check();
+    void apply_boundary_conditions();
 
 
   protected:
@@ -60,6 +62,11 @@ class FixCondiff : public Fix {
     double *boxlo;
     double shift;
     int **part2grid;
+    double dt;
+    double D;
+    double T;
+    double wienerConst;
+    double *rand;
 
     int me,nprocs;
 
@@ -81,6 +88,13 @@ class FixCondiff : public Fix {
     class GridComm *cg;
     class GridComm *cg_peratom;
 
+    char *id_temp;
+    class Compute *temperature;
+    int tflag;
+    int which;
+
+    class RanMars *random;
+
     FFT_SCALAR ****density_brick;
     FFT_SCALAR ****density_brick_counter;
     FFT_SCALAR ****density_brick_force;
@@ -101,6 +115,8 @@ class FixCondiff : public Fix {
     double *gf_b;
 
     int jgroup,groupbit_condiff;
+
+
 };
 
 
