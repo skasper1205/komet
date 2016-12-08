@@ -44,17 +44,16 @@ using namespace MathSpecial;
 #endif
 
 enum{NOBIAS,BIAS};
+enum{REVERSE_RHO};
 
 //The class constructor.
 FixCondiff::FixCondiff(LAMMPS *lmp, int narg, char **arg) :
 		Fix(lmp, narg, arg)
 {
-	if (narg < 4) error->all(FLERR, "Illegal fix condiff command");
+	if (narg < 5) error->all(FLERR, "Illegal fix condiff command");
 
 	MPI_Comm_rank(world,&me);
 	MPI_Comm_size(world,&nprocs);
-
-
 
 	density_brick  = NULL;
 	density_brick_counter = NULL;
@@ -87,7 +86,7 @@ FixCondiff::FixCondiff(LAMMPS *lmp, int narg, char **arg) :
 
 	D = 1.0;
 	//optinal args
-	int iarg = 4;
+	int iarg = 5;
 	while (iarg < narg) {
 		D = atof(arg[iarg]);
 		iarg++;
@@ -101,13 +100,16 @@ FixCondiff::FixCondiff(LAMMPS *lmp, int narg, char **arg) :
 	strcpy(id_temp,id);
 	strcat(id_temp,"_temp");
 
+	kgroup = group->find(arg[4]);
+
 	char **newarg = new char*[3];
 	newarg[0] = id_temp;
-	newarg[1] = group->names[igroup];
+	newarg[1] = group->names[kgroup];
 	newarg[2] = (char *) "temp";
 	modify->add_compute(3,newarg);
 	delete [] newarg;
 	tflag = 1;
+	//printf("group = %s\n",newarg[1]);
 
 }
 
@@ -116,7 +118,8 @@ FixCondiff::~FixCondiff()
 	  deallocate();
 	  memory->destroy(part2grid);
 	  memory->destroy(density_brick);
-
+	  memory->destroy(density_brick_counter);
+	  memory->destroy(density_brick_force);
 	  if (tflag) modify->delete_compute(id_temp);
 }
 
@@ -133,6 +136,9 @@ void FixCondiff::post_force(int vspace)
 	setup_grid();
 	particle_map();
     make_rho();
+
+    cg->reverse_comm(force->kspace,REVERSE_RHO);
+
     reverse_make_rho();
     apply_boundary_conditions();
 
@@ -167,7 +173,9 @@ void FixCondiff::setup()
 	wienerConst = sqrt(2*D*dt);
 
 
-	int icompute = modify->find_compute(id_temp);
+	T=1;
+
+	/*int icompute = modify->find_compute(id_temp);
 	if (icompute < 0)
 	  error->all(FLERR,"Temperature ID for fix temp/berendsen does not exist");
 	temperature = modify->compute[icompute];
@@ -175,7 +183,7 @@ void FixCondiff::setup()
 	if (temperature->tempbias) which = BIAS;
 	else which = NOBIAS;
 
-	T = temperature->compute_scalar();
+	T = temperature->compute_scalar();*/
 
 	//printf("boxhix = %f\n",boxhi[0]);
 
@@ -209,16 +217,22 @@ void FixCondiff::setup_grid()
 }
 void FixCondiff::particle_map()
 {
-	natoms = atom->nlocal;
-	memory->create(part2grid,natoms,3,"condiff:part2grid");
+	int nlocal = atom->nlocal;
 
+	if (atom->nmax > nmax) {
+	    memory->destroy(part2grid);
+	    nmax = atom->nmax;
+	    memory->create(part2grid,nmax,3,"condiff:part2grid");
+	}
+
+	int flag;
 
 	int nx,ny,nz;
     boxlo = domain->boxlo;
 
 	double **x = atom->x;
 
-	for (int i = 0; i < natoms; i++) {
+	for (int i = 0; i < nlocal; i++) {
 
     // (nx,ny,nz) = global coords of grid pt to "lower left" of charge
     // current particle coord can be outside global and local box
@@ -232,8 +246,12 @@ void FixCondiff::particle_map()
 		part2grid[i][1] = ny;
 		part2grid[i][2] = nz;
 
-
+		//if (nx+nlower < nxlo_out || nx+nupper > nxhi_out ||
+		//        ny+nlower < nylo_out || ny+nupper > nyhi_out ||
+		//        nz+nlower < nzlo_out || nz+nupper > nzhi_out)
+		//      flag = 1;
 	}
+	if (flag) error->one(FLERR,"Out of range atoms - cannot compute Condiff");
 }
 
 void FixCondiff::make_rho()
@@ -402,7 +420,7 @@ void FixCondiff::reverse_make_rho()
 						}
 					}
 				}
-				x[i][j] += v[i][j]*dt + f[i][j]*dt*D/T + wienerConst*rand[j];     //euler step
+				x[i][j] += v[i][j]*dt + f[i][j]*dt*D/T + wienerConst*rand[j];     //euler step //Temperatur soll einfach konstant uebergeben werden, nicht imer ausgerechnet
 				//printf("%f\n",rand[j]);
 			}
 		}
@@ -612,7 +630,11 @@ void FixCondiff::set_grid_local()
   	nzhi_out = nhi + nupper;
 
 
-
+  	if (force->kspace->stagger_flag) {
+  	    nxhi_out++;
+  	    nyhi_out++;
+  	    nzhi_out++;
+  	  }
    // PPPM grid pts owned by this proc, including ghosts
 
   	ngrid = (nxhi_out-nxlo_out+1) * (nyhi_out-nylo_out+1) *
@@ -637,6 +659,8 @@ void FixCondiff::deallocate()
 	memory->destroy(help_f);
 	memory->destroy(help_x);
 	memory->destroy(rand);
+
+	delete cg;
 
 }
 void FixCondiff::allocate()

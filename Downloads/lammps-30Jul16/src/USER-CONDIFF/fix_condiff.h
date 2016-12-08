@@ -114,7 +114,9 @@ class FixCondiff : public Fix {
     int order_allocated;
     double *gf_b;
 
-    int jgroup,groupbit_condiff;
+    int jgroup, groupbit_condiff, kgroup;
+
+    int nmax;
 
 
 };
