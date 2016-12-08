@@ -50,26 +50,20 @@ enum{REVERSE_RHO};
 FixCondiff::FixCondiff(LAMMPS *lmp, int narg, char **arg) :
 		Fix(lmp, narg, arg)
 {
-	if (narg < 5) error->all(FLERR, "Illegal fix condiff command");
+	if (narg < 4) error->all(FLERR, "Illegal fix condiff command"); //4 mandatory arguments
 
 	MPI_Comm_rank(world,&me);
 	MPI_Comm_size(world,&nprocs);
 
-	density_brick  = NULL;
+	density_brick_velocity  = NULL;
 	density_brick_counter = NULL;
 	density_brick_force = NULL;
 
-	help_v = NULL;
-	help_f = NULL;
-	help_x = NULL;
-
 	rand = NULL;
 
-	gf_b = NULL;
 	rho1d = rho_coeff = drho1d = drho_coeff = NULL;
 
 	cg = NULL;
-	cg_peratom = NULL;
 
 	part2grid = NULL;
 
@@ -77,53 +71,64 @@ FixCondiff::FixCondiff(LAMMPS *lmp, int narg, char **arg) :
 	minorder=2;
 	order_allocated = order;
 
-	jgroup = group->find(arg[3]);            //set grouptbit_condiff so fix knows which particles to act on
-	if (jgroup == -1) error->all(FLERR,"Could not find fix group ID");
+	jgroup = group->find(arg[3]);            //set groupbit_condiff, so fix knows which particles to act on
+	if (jgroup == -1) error->all(FLERR,"Could not find fix condiff group ID");
 	groupbit_condiff = group->bitmask[jgroup];
 
 	kspace_check();
 	pppm_check();
 
+	//standard values
+
+	T = 1.0;
 	D = 1.0;
-	//optinal args
-	int iarg = 5;
-	while (iarg < narg) {
-		D = atof(arg[iarg]);
-		iarg++;
-	}
-	printf("diffusion coefficient = %f\n",D);
-	int seed = 11111 ;
-	random = new RanMars(lmp,seed + comm->me);
+	seed = 11111;
 
-	int n = strlen(id) + 6;
-	id_temp = new char[n];
-	strcpy(id_temp,id);
-	strcat(id_temp,"_temp");
 
-	kgroup = group->find(arg[4]);
+	//optional args
 
-	char **newarg = new char*[3];
-	newarg[0] = id_temp;
-	newarg[1] = group->names[kgroup];
-	newarg[2] = (char *) "temp";
-	modify->add_compute(3,newarg);
-	delete [] newarg;
-	tflag = 1;
-	//printf("group = %s\n",newarg[1]);
+	int iarg = 4;
+
+    while (iarg < narg) {
+    	 if (strcmp(arg[iarg],"temp") == 0) {
+    		 if (iarg+2 > narg) error->all(FLERR,"Illegal fix condiff command");
+    		      T = atof(arg[iarg+1]);
+    		      if (T <= 0) error->all(FLERR,"Illegal fix condiff command");
+    		      iarg += 2;
+    	 } else if (strcmp(arg[iarg],"diff") == 0) {
+    		 if (iarg+2 > narg) error->all(FLERR,"Illegal fix condiff command");
+    		      D = atof(arg[iarg+1]);
+    		      if (D <= 0) error->all(FLERR,"Illegal fix condiff command");
+    		      iarg += 2;
+    	 } else if (strcmp(arg[iarg],"seed") == 0) {
+    		 if (iarg+2 > narg) error->all(FLERR,"Illegal fix condiff command");
+    		      seed = atoi(arg[iarg+1]);
+    		      if (seed <= 0) error->all(FLERR,"Illegal fix condiff command");
+    		      iarg += 2;
+    	 } else error->all(FLERR,"Illegal fix condiff command");
+    }
+
+
+	printf("Temp = %f\n",T);
+	printf("Diffusion Coefficient = %f\n",D);
+	printf("Seed = %i\n",seed);
+
+	random = new RanMars(lmp, seed);
 
 }
 
+//The class destructor
 FixCondiff::~FixCondiff()
 {
-	  deallocate();
-	  memory->destroy(part2grid);
-	  memory->destroy(density_brick);
-	  memory->destroy(density_brick_counter);
-	  memory->destroy(density_brick_force);
-	  if (tflag) modify->delete_compute(id_temp);
+	deallocate();
+	memory->destroy(part2grid);
+	memory->destroy(density_brick_velocity);
+	memory->destroy(density_brick_counter);
+	memory->destroy(density_brick_force);
 }
 
-int FixCondiff::setmask()	//where algorithm steps in
+//Where algorithm steps in
+int FixCondiff::setmask()
 {
 	int mask = 0;
 	mask |= POST_FORCE;
@@ -143,11 +148,6 @@ void FixCondiff::post_force(int vspace)
     apply_boundary_conditions();
 
 }
-
-void FixCondiff::end_of_step(){
-
-}
-
 
 void FixCondiff::setup()
 {
@@ -171,24 +171,9 @@ void FixCondiff::setup()
 	delvolinv = delxinv*delyinv*delzinv;
 	dt = update->dt;
 	wienerConst = sqrt(2*D*dt);
-
-
-	T=1;
-
-	/*int icompute = modify->find_compute(id_temp);
-	if (icompute < 0)
-	  error->all(FLERR,"Temperature ID for fix temp/berendsen does not exist");
-	temperature = modify->compute[icompute];
-
-	if (temperature->tempbias) which = BIAS;
-	else which = NOBIAS;
-
-	T = temperature->compute_scalar();*/
-
-	//printf("boxhix = %f\n",boxhi[0]);
-
 }
 
+  //setup_grid() framework taken from pppm.cpp
 void FixCondiff::setup_grid()
 {
   // free all arrays previously allocated
@@ -215,6 +200,8 @@ void FixCondiff::setup_grid()
 
 
 }
+
+   //particle_map() framework taken from pppm.cpp
 void FixCondiff::particle_map()
 {
 	int nlocal = atom->nlocal;
@@ -254,6 +241,7 @@ void FixCondiff::particle_map()
 	if (flag) error->one(FLERR,"Out of range atoms - cannot compute Condiff");
 }
 
+   //make_rho() framework taken from pppm.cpp
 void FixCondiff::make_rho()
 {
 	int l,m,n,nx,ny,nz,mx,my,mz;
@@ -294,7 +282,7 @@ void FixCondiff::make_rho()
 					my = m+ny;
 					for (l = nlower; l <= nupper; l++) {
 						mx = l+nx;
-						density_brick[j][mz][my][mx] = 0;
+						density_brick_velocity[j][mz][my][mx] = 0;
 						density_brick_counter[j][mz][my][mx] = 0;
 						density_brick_force[j][mz][my][mx] = 0;
 					}
@@ -303,7 +291,8 @@ void FixCondiff::make_rho()
 		}
 	}
 
-	for (int i = 0; i < nlocal; i++) { //take velocity of dpd-particles and map them on grid
+	//take velocity of dpd-particles and map them on grid
+	for (int i = 0; i < nlocal; i++) {
 
 		if (mask[i] & groupbit){
 			nx = part2grid[i][0];
@@ -316,7 +305,6 @@ void FixCondiff::make_rho()
 			compute_rho1d(dx,dy,dz);
 
 			for (int j = 0; j < 3; j++) {
-				//f[i][j] -= help_f[i][j];
 				z0 = delvolinv;
 				for (n = nlower; n <= nupper; n++) {
 					mz = n+nz;
@@ -326,7 +314,7 @@ void FixCondiff::make_rho()
 						x0 = y0*rho1d[1][m];
 						for (l = nlower; l <= nupper; l++) {
 							mx = l+nx;
-							density_brick[j][mz][my][mx] += x0*rho1d[0][l]*v[i][j];
+							density_brick_velocity[j][mz][my][mx] += x0*rho1d[0][l]*v[i][j];
 							density_brick_counter[j][mz][my][mx]+=x0*rho1d[0][l];
 
 						}
@@ -334,7 +322,9 @@ void FixCondiff::make_rho()
 				}
 			}
 		}
-		if (mask[i] & groupbit_condiff){ //take force of condiff-particles and map them on grid
+
+		//take force of condiff-particles and map them on grid
+		if (mask[i] & groupbit_condiff){
 			nx = part2grid[i][0];
 			ny = part2grid[i][1];
 			nz = part2grid[i][2];
@@ -415,13 +405,13 @@ void FixCondiff::reverse_make_rho()
 							mx = l+nx;
 							x0 = y0*rho1d[0][l];
 							if(density_brick_counter[j][mz][my][mx] !=0) {
-								v[i][j] += (density_brick[j][mz][my][mx]*x0/density_brick_counter[j][mz][my][mx]);
+								v[i][j] += (density_brick_velocity[j][mz][my][mx]*x0/density_brick_counter[j][mz][my][mx]);
 							}
 						}
 					}
 				}
-				x[i][j] += v[i][j]*dt + f[i][j]*dt*D/T + wienerConst*rand[j];     //euler step //Temperatur soll einfach konstant uebergeben werden, nicht imer ausgerechnet
-				//printf("%f\n",rand[j]);
+				//Euler step
+				x[i][j] += v[i][j]*dt + f[i][j]*dt*D/T + wienerConst*rand[j];
 			}
 		}
 		if (mask[i] & groupbit){
@@ -435,8 +425,6 @@ void FixCondiff::reverse_make_rho()
 			compute_rho1d(dx,dy,dz);
 
 			for(int j = 0; j < 3; j++){
-				//f[i][j] -= help_f[i][j];
-				help_f[i][j] = 0;
 				for (n = nlower; n <= nupper; n++) {
 					mz = n+nz;
 					z0 = rho1d[2][n];
@@ -447,18 +435,17 @@ void FixCondiff::reverse_make_rho()
 							mx = l+nx;
 							x0 = y0*rho1d[0][l];
 							if(density_brick_counter[j][mz][my][mx] !=0){
-								help_f[i][j] += (density_brick_force[j][mz][my][mx]*x0/density_brick_counter[j][mz][my][mx]);
+								f[i][j] += (density_brick_force[j][mz][my][mx]*x0/density_brick_counter[j][mz][my][mx]);
 							}
 						}
 					}
 				}
-				f[i][j] += help_f[i][j];
 			}
 		}
 	}
 }
 
-
+//compute_rho1d framework taken from pppm.cpp
 void FixCondiff::compute_rho1d(const FFT_SCALAR &dx, const FFT_SCALAR &dy,
                          const FFT_SCALAR &dz)
 {
@@ -479,6 +466,7 @@ void FixCondiff::compute_rho1d(const FFT_SCALAR &dx, const FFT_SCALAR &dy,
 	}
 }
 
+//compute_rho_coeff framework taken from pppm.cpp
 void FixCondiff::compute_rho_coeff()
 {
 	int j,k,l,m;
@@ -527,6 +515,7 @@ void FixCondiff::compute_rho_coeff()
 	memory->destroy2d_offset(a,-order);
 }
 
+//compute_drho1d framework taken from pppm.cpp
 void FixCondiff::compute_drho1d(const FFT_SCALAR &dx, const FFT_SCALAR &dy,
                           const FFT_SCALAR &dz)
 {
@@ -547,6 +536,7 @@ void FixCondiff::compute_drho1d(const FFT_SCALAR &dx, const FFT_SCALAR &dy,
 	}
 }
 
+//set_grid_local() framework taken from pppm.cpp
 void FixCondiff::set_grid_local()
 {
   // global indices of PPPM grid range from 0 to N-1
@@ -643,10 +633,10 @@ void FixCondiff::set_grid_local()
 }
 
 
-
+	//deallocate() framework taken from pppm.cpp
 void FixCondiff::deallocate()
 {
-	memory->destroy4d_offset(density_brick,nzlo_out,nylo_out,nxlo_out);
+	memory->destroy4d_offset(density_brick_velocity,nzlo_out,nylo_out,nxlo_out);
 	memory->destroy4d_offset(density_brick_counter,nzlo_out,nylo_out,nxlo_out);
 	memory->destroy4d_offset(density_brick_force,nzlo_out,nylo_out,nxlo_out);
 
@@ -655,17 +645,16 @@ void FixCondiff::deallocate()
 	memory->destroy2d_offset(rho_coeff,(1-order_allocated)/2);
 	memory->destroy2d_offset(drho_coeff,(1-order_allocated)/2);
 
-	memory->destroy(help_v);
-	memory->destroy(help_f);
-	memory->destroy(help_x);
 	memory->destroy(rand);
 
 	delete cg;
 
 }
+
+    //allocate() framework taken from pppm.cpp
 void FixCondiff::allocate()
 {
-	memory->create4d_offset(density_brick,3,nzlo_out,nzhi_out,nylo_out,nyhi_out,
+	memory->create4d_offset(density_brick_velocity,3,nzlo_out,nzhi_out,nylo_out,nyhi_out,
                           nxlo_out,nxhi_out,"condiff:density_brick");
 	memory->create4d_offset(density_brick_counter,3,nzlo_out,nzhi_out,nylo_out,nyhi_out,
 	                          nxlo_out,nxhi_out,"condiff:density_brick");
@@ -679,15 +668,10 @@ void FixCondiff::allocate()
 	memory->create2d_offset(drho_coeff,order,(1-order)/2,order/2,
                           "condiff:drho_coeff");
 
-	memory->create(help_v,atom->nmax,3,"condiff:help_v");
-	memory->create(help_f,atom->nmax,3,"condiff:help_f");
-	memory->create(help_x,atom->nmax,3,"condiff:help_x");
-
 	memory->create(rand,3,"condiff:rand");
-  // create ghost grid object for rho and electric field communication
 
+	// create ghost grid object for rho and velocity field communication
 	int (*procneigh)[2] = comm->procneigh;
-
 
     cg = new GridComm(lmp,world,3,1,
                       nxlo_in,nxhi_in,nylo_in,nyhi_in,nzlo_in,nzhi_in,
@@ -696,22 +680,21 @@ void FixCondiff::allocate()
                       procneigh[1][1],procneigh[2][0],procneigh[2][1]);
 }
 
-void FixCondiff::kspace_check()	//check if pppm computation is used
+	//check if pppm computation is used
+void FixCondiff::kspace_check()
 {
-
 	if (!force->kspace)
 		error->all(FLERR, "Not using kspace computations");
-
 }
 
-void FixCondiff::pppm_check()	//check if pppm computation is used
+	//check if pppm computation is used
+void FixCondiff::pppm_check()
 {
-
 	if (!force->pair->pppmflag)
 		error->all(FLERR, "Not using pppm computations");
-
 }
 
+	//boundary_conditions for condiff particles
 void FixCondiff::apply_boundary_conditions()
 {
 	double **x = atom->x;

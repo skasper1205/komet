@@ -36,7 +36,6 @@ class FixCondiff : public Fix {
 	~FixCondiff();
 	int setmask();
 	void post_force(int);
-	void end_of_step();
 	void kspace_check();
     void pppm_check();
     void apply_boundary_conditions();
@@ -57,16 +56,34 @@ class FixCondiff : public Fix {
     void set_grid_local();
     void setup_grid();
 
+    FFT_SCALAR ****density_brick_velocity;
+    FFT_SCALAR ****density_brick_counter;
+    FFT_SCALAR ****density_brick_force;
+
+    double *rand;
+
+    FFT_SCALAR **rho1d,**rho_coeff,**drho1d,**drho_coeff; //compute_rho1d
+
+    class GridComm *cg;
+
+    int **part2grid;
+    int order, minorder, order_allocated;
+
+    int jgroup, groupbit_condiff;
+
+    double T;
+    double D;
+    int seed;
+
     int nx_pppm, ny_pppm, nz_pppm; //particle_map
-    int order, minorder, natoms;
+
     double *boxlo;
     double shift;
-    int **part2grid;
+
     double dt;
-    double D;
-    double T;
+
     double wienerConst;
-    double *rand;
+
 
     int me,nprocs;
 
@@ -76,45 +93,13 @@ class FixCondiff : public Fix {
     double shiftone; //make_rho
     int nlower, nupper;
 
-
-    FFT_SCALAR **rho1d,**rho_coeff,**drho1d,**drho_coeff; //compute_rho1d
-
     int nxlo_in,nylo_in,nzlo_in,nxhi_in,nyhi_in,nzhi_in;
     int nxlo_out,nylo_out,nzlo_out,nxhi_out,nyhi_out,nzhi_out;
     int nxlo_ghost,nxhi_ghost,nylo_ghost,nyhi_ghost,nzlo_ghost,nzhi_ghost;
     int nxlo_fft,nylo_fft,nzlo_fft,nxhi_fft,nyhi_fft,nzhi_fft;
     int ngrid,nfft,nfft_both;
 
-    class GridComm *cg;
-    class GridComm *cg_peratom;
-
-    char *id_temp;
-    class Compute *temperature;
-    int tflag;
-    int which;
-
     class RanMars *random;
-
-    FFT_SCALAR ****density_brick;
-    FFT_SCALAR ****density_brick_counter;
-    FFT_SCALAR ****density_brick_force;
-    double **help_v;
-    double **help_f;
-    double **help_x;
-    /*FFT_SCALAR ***vdx_brick,***vdy_brick,***vdz_brick;
-    FFT_SCALAR ***u_brick;
-    FFT_SCALAR ***v0_brick,***v1_brick,***v2_brick;
-    FFT_SCALAR ***v3_brick,***v4_brick,***v5_brick;
-    double *greensfn;
-    double **vg;
-    double *fkx,*fky,*fkz;
-    FFT_SCALAR *density_fft;
-    FFT_SCALAR *work1,*work2;*/
-
-    int order_allocated;
-    double *gf_b;
-
-    int jgroup, groupbit_condiff, kgroup;
 
     int nmax;
 
