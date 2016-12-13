@@ -56,9 +56,15 @@ class FixCondiff : public Fix {
     void set_grid_local();
     void setup_grid();
 
-    FFT_SCALAR ****density_brick_velocity;
-    FFT_SCALAR ****density_brick_counter;
-    FFT_SCALAR ****density_brick_force;
+    FFT_SCALAR ***density_brick_velocity_x;
+    FFT_SCALAR ***density_brick_velocity_y;
+    FFT_SCALAR ***density_brick_velocity_z;
+    FFT_SCALAR ***density_brick_counter_x;
+    FFT_SCALAR ***density_brick_counter_y;
+    FFT_SCALAR ***density_brick_counter_z;
+    FFT_SCALAR ***density_brick_force_x;
+    FFT_SCALAR ***density_brick_force_y;
+    FFT_SCALAR ***density_brick_force_z;
 
     double *rand;
 
