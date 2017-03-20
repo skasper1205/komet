@@ -24,6 +24,7 @@
 #include "compute.h"
 #include "modify.h"
 
+
 #include "math_const.h"
 #include "math_special.h"
 
@@ -52,27 +53,29 @@ FixCondiff::FixCondiff(LAMMPS *lmp, int narg, char **arg) :
 {
 	if (narg < 4) error->all(FLERR, "Illegal fix condiff command"); //4 mandatory arguments
 
-	MPI_Comm_rank(world,&me);
-	MPI_Comm_size(world,&nprocs);
+       	MPI_Comm_rank(world,&me);
+       	MPI_Comm_size(world,&nprocs);
 
-	density_brick_velocity_x  = NULL;
-	density_brick_velocity_y  = NULL;
-	density_brick_velocity_z  = NULL;
-	density_brick_counter_x = NULL;
-	density_brick_counter_y = NULL;
-	density_brick_counter_z = NULL;
-	density_brick_force_x = NULL;
-	density_brick_force_y = NULL;
-	density_brick_force_z = NULL;
+	density_brick_velocity_x_loc  = NULL;
+	density_brick_velocity_y_loc  = NULL;
+	density_brick_velocity_z_loc  = NULL;
+	density_brick_velocity_x_glo  = NULL;
+	density_brick_velocity_y_glo  = NULL;
+	density_brick_velocity_z_glo  = NULL;
+
+	density_brick_force_x_loc = NULL;
+	density_brick_force_y_loc = NULL;
+	density_brick_force_z_loc = NULL;
+	density_brick_force_x_glo = NULL;
+	density_brick_force_y_glo = NULL;
+	density_brick_force_z_glo = NULL;
+	
+	density_brick_counter_loc = NULL;
+	density_brick_counter_glo = NULL;
 
 	rand = NULL;
 
 	rho1d = rho_coeff = drho1d = drho_coeff = NULL;
-
-	cg = NULL;
-
-	part2grid = NULL;
-
 	order =  force->kspace->order;
 	minorder=2;
 	order_allocated = order;
@@ -127,16 +130,22 @@ FixCondiff::FixCondiff(LAMMPS *lmp, int narg, char **arg) :
 FixCondiff::~FixCondiff()
 {
 	deallocate();
-	memory->destroy(part2grid);
-	memory->destroy(density_brick_velocity_x);
-	memory->destroy(density_brick_velocity_y);
-	memory->destroy(density_brick_velocity_z);
-	memory->destroy(density_brick_counter_x);
-	memory->destroy(density_brick_counter_y);
-	memory->destroy(density_brick_counter_z);
-	memory->destroy(density_brick_force_x);
-	memory->destroy(density_brick_force_y);
-	memory->destroy(density_brick_force_z);
+	memory->destroy(density_brick_velocity_x_loc);
+	memory->destroy(density_brick_velocity_y_loc);
+	memory->destroy(density_brick_velocity_z_loc);
+	memory->destroy(density_brick_velocity_x_glo);
+	memory->destroy(density_brick_velocity_y_glo);
+	memory->destroy(density_brick_velocity_z_glo);
+
+	memory->destroy(density_brick_force_x_loc);
+	memory->destroy(density_brick_force_y_loc);
+	memory->destroy(density_brick_force_z_loc);
+	memory->destroy(density_brick_force_x_glo);
+	memory->destroy(density_brick_force_y_glo);
+	memory->destroy(density_brick_force_z_glo);
+	
+	memory->destroy(density_brick_counter_loc);
+	memory->destroy(density_brick_counter_glo);
 }
 
 //Where algorithm steps in
@@ -154,11 +163,11 @@ void FixCondiff::post_force(int vspace)
 	particle_map();
     make_rho();
 
-    cg->reverse_comm(force->kspace,REVERSE_RHO);
+    // cg->reverse_comm(force->kspace,REVERSE_RHO);
 
     reverse_make_rho();
-    apply_boundary_conditions();
-
+    //apply_boundary_conditions();
+	MPI_Barrier(world);
 }
 
 void FixCondiff::setup()
@@ -197,17 +206,7 @@ void FixCondiff::setup_grid()
   // reset portion of global grid that each proc owns
 
 	set_grid_local();
-
-  // reallocate K-space dependent memory
-  // check if grid communication is now overlapping if not allowed
-  // don't invoke allocate peratom() or group(), will be allocated when needed
-
 	allocate();
-
-	cg->ghost_notify();
-
-	cg->setup();
-
 	compute_rho_coeff();
 
 
@@ -218,39 +217,11 @@ void FixCondiff::particle_map()
 {
 	int nlocal = atom->nlocal;
 
-	if (atom->nmax > nmax) {
-	    memory->destroy(part2grid);
-	    nmax = atom->nmax;
-	    memory->create(part2grid,nmax,3,"condiff:part2grid");
-	}
-
-	int flag;
-
 	int nx,ny,nz;
-    boxlo = domain->boxlo;
+        boxlo = domain->boxlo;
 
 	double **x = atom->x;
 
-	/*for (int i = 0; i < nlocal; i++) {
-
-    // (nx,ny,nz) = global coords of grid pt to "lower left" of charge
-    // current particle coord can be outside global and local box
-    // add/subtract OFFSET to avoid int(-0.75) = 0 when want it to be -1
-
-		nx = static_cast<int> ((x[i][0]-boxlo[0])*delxinv+shift) - OFFSET;
-		ny = static_cast<int> ((x[i][1]-boxlo[1])*delyinv+shift) - OFFSET;
-		nz = static_cast<int> ((x[i][2]-boxlo[2])*delzinv+shift) - OFFSET;
-
-	    part2grid[i][0] = nx;
-		part2grid[i][1] = ny;
-		part2grid[i][2] = nz;
-
-		//if (nx+nlower < nxlo_out || nx+nupper > nxhi_out ||
-		//        ny+nlower < nylo_out || ny+nupper > nyhi_out ||
-		//        nz+nlower < nzlo_out || nz+nupper > nzhi_out)
-		//      flag = 1;
-	}*/
-	//if (flag) error->one(FLERR,"Out of range atoms - cannot compute Condiff");
 }
 
    //make_rho() framework taken from pppm.cpp
@@ -261,26 +232,37 @@ void FixCondiff::make_rho()
 
   // clear 3d density array
 
-	memset(&(density_brick_velocity_x[nzlo_out][nylo_out][nxlo_out]),0,
+	memset(&(density_brick_velocity_x_loc[nzlo_out][nylo_out][nxlo_out]),0,
          ngrid*sizeof(FFT_SCALAR));
-	memset(&(density_brick_velocity_y[nzlo_out][nylo_out][nxlo_out]),0,
+	memset(&(density_brick_velocity_y_loc[nzlo_out][nylo_out][nxlo_out]),0,
 	     ngrid*sizeof(FFT_SCALAR));
-	memset(&(density_brick_velocity_z[nzlo_out][nylo_out][nxlo_out]),0,
+	memset(&(density_brick_velocity_z_loc[nzlo_out][nylo_out][nxlo_out]),0,
 	     ngrid*sizeof(FFT_SCALAR));
+	memset(&(density_brick_velocity_x_glo[nzlo_out][nylo_out][nxlo_out]),0,
+         ngrid*sizeof(FFT_SCALAR));
+	memset(&(density_brick_velocity_y_glo[nzlo_out][nylo_out][nxlo_out]),0,
+	     ngrid*sizeof(FFT_SCALAR));
+	memset(&(density_brick_velocity_z_glo[nzlo_out][nylo_out][nxlo_out]),0,
+	     ngrid*sizeof(FFT_SCALAR));
+	     
+	memset(&(density_brick_force_x_loc[nzlo_out][nylo_out][nxlo_out]),0,
+		     ngrid*sizeof(FFT_SCALAR));
+	memset(&(density_brick_force_y_loc[nzlo_out][nylo_out][nxlo_out]),0,
+			ngrid*sizeof(FFT_SCALAR));
+	memset(&(density_brick_force_z_loc[nzlo_out][nylo_out][nxlo_out]),0,
+			ngrid*sizeof(FFT_SCALAR));
+	memset(&(density_brick_force_x_glo[nzlo_out][nylo_out][nxlo_out]),0,
+		     ngrid*sizeof(FFT_SCALAR));
+	memset(&(density_brick_force_y_glo[nzlo_out][nylo_out][nxlo_out]),0,
+			ngrid*sizeof(FFT_SCALAR));
+	memset(&(density_brick_force_z_glo[nzlo_out][nylo_out][nxlo_out]),0,
+			ngrid*sizeof(FFT_SCALAR));
 
-	memset(&(density_brick_counter_x[nzlo_out][nylo_out][nxlo_out]),0,
+	memset(&(density_brick_counter_loc[nzlo_out][nylo_out][nxlo_out]),0,
 	         ngrid*sizeof(FFT_SCALAR));
-	memset(&(density_brick_counter_y[nzlo_out][nylo_out][nxlo_out]),0,
-		     ngrid*sizeof(FFT_SCALAR));
-	memset(&(density_brick_counter_z[nzlo_out][nylo_out][nxlo_out]),0,
-		     ngrid*sizeof(FFT_SCALAR));
+	memset(&(density_brick_counter_glo[nzlo_out][nylo_out][nxlo_out]),0,
+	         ngrid*sizeof(FFT_SCALAR));
 
-	memset(&(density_brick_force_x[nzlo_out][nylo_out][nxlo_out]),0,
-		     ngrid*sizeof(FFT_SCALAR));
-	memset(&(density_brick_force_y[nzlo_out][nylo_out][nxlo_out]),0,
-			ngrid*sizeof(FFT_SCALAR));
-	memset(&(density_brick_force_z[nzlo_out][nylo_out][nxlo_out]),0,
-			ngrid*sizeof(FFT_SCALAR));
 
   // loop over my velocities, add their contribution to nearby grid points
   // (nx,ny,nz) = global coords of grid pt to "lower left" of charge
@@ -318,11 +300,11 @@ void FixCondiff::make_rho()
 						x0 = y0*rho1d[1][m];
 						for (l = nlower; l <= nupper; l++) {
 							mx = l+nx;
-							density_brick_velocity_x[mz][my][mx] += x0*rho1d[0][l]*v[i][0];
-							density_brick_velocity_y[mz][my][mx] += x0*rho1d[0][l]*v[i][1];
-							density_brick_velocity_z[mz][my][mx] += x0*rho1d[0][l]*v[i][2];
+							density_brick_velocity_x_loc[mz][my][mx] += x0*rho1d[0][l]*v[i][0];
+							density_brick_velocity_y_loc[mz][my][mx] += x0*rho1d[0][l]*v[i][1];
+							density_brick_velocity_z_loc[mz][my][mx] += x0*rho1d[0][l]*v[i][2];
 
-							density_brick_counter_x[mz][my][mx]+=x0*rho1d[0][l];
+							density_brick_counter_loc[mz][my][mx]+=x0*rho1d[0][l];
 						}
 					}
 				}
@@ -340,7 +322,7 @@ void FixCondiff::make_rho()
 
 			compute_rho1d(dx,dy,dz);
 
-			for (int j = 0; j < 3; j++) {
+			//for (int j = 0; j < 3; j++) {
 				z0 = delvolinv;
 				for (n = nlower; n <= nupper; n++) {
 					mz = n+nz;
@@ -350,16 +332,56 @@ void FixCondiff::make_rho()
 						x0 = y0*rho1d[1][m];
 						for (l = nlower; l <= nupper; l++) {
 							mx = l+nx;
-							density_brick_force_x[mz][my][mx] += x0*rho1d[0][l]*f[i][0];
-							density_brick_force_y[mz][my][mx] += x0*rho1d[0][l]*f[i][1];
-							density_brick_force_z[mz][my][mx] += x0*rho1d[0][l]*f[i][2];
-							//density_brick_counter2[j][mz][my][mx] += x0*rho1d[0][l];
+							density_brick_force_x_loc[mz][my][mx] += x0*rho1d[0][l]*f[i][0];
+							density_brick_force_y_loc[mz][my][mx] += x0*rho1d[0][l]*f[i][1];
+							density_brick_force_z_loc[mz][my][mx] += x0*rho1d[0][l]*f[i][2];
 						}
 					}
 				}
-			}
+			//}
 		}
 	}
+	int a[2][2]={{1,2},{1,2}};
+	int b[2][2];
+	MPI_Allreduce(a,b,4,MPI_INT,MPI_SUM,world);
+	printf("%i\t%i\t%i\t%i\n", b[0][0],b[0][1],b[1][0],b[1][1]);
+	
+	//density_brick_force_x_glo[0][1][0]=1.0;
+	//printf("%f\n", density_brick_force_x_loc[0][1][0]);
+	//printf("%f\n", density_brick_force_x_glo[0][1][0]);
+	//printf("%i\n", sizeof(density_brick_force_z_loc)/sizeof(*density_brick_force_z_loc));
+	//printf("%i\n", sizeof(density_brick_velocity_x_loc)/sizeof(*density_brick_velocity_x_loc));
+	//printf("%i\n", sizeof(density_brick_velocity_y_loc)/sizeof(*density_brick_velocity_y_loc));
+	//printf("%i\n", sizeof(density_brick_velocity_z_loc)/sizeof(*density_brick_velocity_z_loc));
+	//printf("%i\n", sizeof(density_brick_counter_loc)/sizeof(*density_brick_counter_loc));
+	
+	//MPI_Allreduce(density_brick_force_x_loc,density_brick_force_x_glo,1,MPI_DOUBLE,MPI_SUM,world);//(nzhi_out-nzlo_out+1)*(nyhi_out-nylo_out+1)*(nxhi_out-nxlo_out+1)
+	//MPI_Allreduce(density_brick_force_y_loc,density_brick_force_y_glo,1,MPI_DOUBLE,MPI_SUM,world);
+	//MPI_Allreduce(density_brick_force_z_loc,density_brick_force_z_glo,1,MPI_DOUBLE,MPI_SUM,world);
+	//MPI_Allreduce(density_brick_velocity_x_loc,density_brick_velocity_x_glo,1,MPI_DOUBLE,MPI_SUM,world);
+	//MPI_Allreduce(density_brick_velocity_y_loc,density_brick_velocity_y_glo,1,MPI_DOUBLE,MPI_SUM,world);
+	//MPI_Allreduce(density_brick_velocity_z_loc,density_brick_velocity_z_glo,1,MPI_DOUBLE,MPI_SUM,world);
+	//MPI_Allreduce(density_brick_counter_loc,density_brick_counter_glo,1,MPI_DOUBLE,MPI_SUM,world);
+	/*density_brick_velocity_x_glo = density_brick_velocity_x_loc;
+	density_brick_velocity_y_glo = density_brick_velocity_y_loc;
+	density_brick_velocity_z_glo = density_brick_velocity_z_loc;
+	density_brick_force_x_glo = density_brick_force_x_loc;
+	density_brick_force_y_glo = density_brick_force_y_loc;
+	density_brick_force_z_glo = density_brick_force_z_loc;*/
+	//printf("%i\n", sizeof(density_brick_force_y_glo)/sizeof(*density_brick_force_y_glo));
+	//printf("%f\n", density_brick_force_x_loc[0][1][0]);
+	//printf("%f\n", density_brick_force_x_glo[0][1][0]);
+}
+
+void FixCondiff::rho_decompose()
+{
+	/*MPI_Allreduce(&density_brick_force_x_loc,&density_brick_force_x_glo,(nzhi_out-nzlo_out+1)*(nyhi_out-nylo_out+1)*(nxhi_out-nxlo_out+1),MPI_DOUBLE,MPI_SUM,world);
+	MPI_Allreduce(&density_brick_force_y_loc,&density_brick_force_y_glo,(nzhi_out-nzlo_out+1)*(nyhi_out-nylo_out+1)*(nxhi_out-nxlo_out+1),MPI_DOUBLE,MPI_SUM,world);
+	MPI_Allreduce(&density_brick_force_z_loc,&density_brick_force_z_glo,(nzhi_out-nzlo_out+1)*(nyhi_out-nylo_out+1)*(nxhi_out-nxlo_out+1),MPI_DOUBLE,MPI_SUM,world);
+	MPI_Allreduce(&density_brick_velocity_x_loc,&density_brick_velocity_x_glo,(nzhi_out-nzlo_out+1)*(nyhi_out-nylo_out+1)*(nxhi_out-nxlo_out+1),MPI_DOUBLE,MPI_SUM,world);
+	MPI_Allreduce(&density_brick_velocity_y_loc,&density_brick_velocity_y_glo,(nzhi_out-nzlo_out+1)*(nyhi_out-nylo_out+1)*(nxhi_out-nxlo_out+1),MPI_DOUBLE,MPI_SUM,world);
+	MPI_Allreduce(&density_brick_velocity_z_loc,&density_brick_velocity_z_glo,(nzhi_out-nzlo_out+1)*(nyhi_out-nylo_out+1)*(nxhi_out-nxlo_out+1),MPI_DOUBLE,MPI_SUM,world);
+	MPI_Allreduce(&density_brick_counter_loc,&density_brick_counter_glo,(nzhi_out-nzlo_out+1)*(nyhi_out-nylo_out+1)*(nxhi_out-nxlo_out+1),MPI_DOUBLE,MPI_SUM,world);*/
 }
 
 void FixCondiff::reverse_make_rho()
@@ -372,8 +394,6 @@ void FixCondiff::reverse_make_rho()
   // (nx,ny,nz) = global coords of grid pt to "lower left" of charge
   // (dx,dy,dz) = distance to "lower left" grid pt
   // (mx,my,mz) = global coords of moving stencil pt
-
-
 
 	double **v = atom->v;
 	double **x = atom->x;
@@ -395,9 +415,23 @@ void FixCondiff::reverse_make_rho()
 
 			//for(int j = 0; j < 3; j++){
 
-				rand[0] = random->gaussian();
-				rand[1] = random->gaussian();
-				rand[2] = random->gaussian();
+			rand[0] = random->gaussian();
+			rand[1] = random->gaussian();
+			rand[2] = random->gaussian();//uniform
+
+			/*	if(random->gaussian() < 0){
+			  rand[0] = -rand[0];
+			}
+			if(random->gaussian() < 0){
+			  rand[1] = -rand[1];
+			}
+			if(random->gaussian() < 0){
+			  rand[2] = -rand[2];
+			  }*/
+
+				v[i][0] = 0;
+				v[i][1] = 0;
+				v[i][2] = 0;
 
 				for (n = nlower; n <= nupper; n++) {
 					mz = n+nz;
@@ -408,10 +442,10 @@ void FixCondiff::reverse_make_rho()
 						for (l = nlower; l <= nupper; l++) {
 							mx = l+nx;
 							x0 = y0*rho1d[0][l];
-							if(density_brick_counter_x[mz][my][mx] !=0) {
-								v[i][0] += (density_brick_velocity_x[mz][my][mx]*x0/density_brick_counter_x[mz][my][mx]);
-								v[i][1] += (density_brick_velocity_y[mz][my][mx]*x0/density_brick_counter_x[mz][my][mx]);
-								v[i][2] += (density_brick_velocity_z[mz][my][mx]*x0/density_brick_counter_x[mz][my][mx]);
+							if(density_brick_counter_glo[mz][my][mx] !=0) {
+								v[i][0] += (density_brick_velocity_x_loc[mz][my][mx]*x0/density_brick_counter_loc[mz][my][mx]);
+								v[i][1] += (density_brick_velocity_y_loc[mz][my][mx]*x0/density_brick_counter_loc[mz][my][mx]);
+								v[i][2] += (density_brick_velocity_z_loc[mz][my][mx]*x0/density_brick_counter_loc[mz][my][mx]);
 							}
 						}
 					}
@@ -420,9 +454,7 @@ void FixCondiff::reverse_make_rho()
 				x[i][0] += v[i][0]*dt + f[i][0]*dt*D/T + wienerConst*rand[0];
 				x[i][1] += v[i][1]*dt + f[i][1]*dt*D/T + wienerConst*rand[1];
 				x[i][2] += v[i][2]*dt + f[i][2]*dt*D/T + wienerConst*rand[2];
-				v[i][0] = 0;
-				v[i][1] = 0;
-				v[i][2] = 0;
+			
 			//}
 		}
 		if (mask[i] & groupbit){ //assign (normalized) force of pseudo-ions to dpd-particles
@@ -445,10 +477,10 @@ void FixCondiff::reverse_make_rho()
 						for (l = nlower; l <= nupper; l++) {
 							mx = l+nx;
 							x0 = y0*rho1d[0][l];
-							if(density_brick_counter_x[mz][my][mx] !=0){
-								f[i][0] += (density_brick_force_x[mz][my][mx]*x0/density_brick_counter_x[mz][my][mx]);
-								f[i][1] += (density_brick_force_y[mz][my][mx]*x0/density_brick_counter_x[mz][my][mx]);
-								f[i][2] += (density_brick_force_z[mz][my][mx]*x0/density_brick_counter_x[mz][my][mx]);
+							if(density_brick_counter_glo[mz][my][mx] !=0){
+								f[i][0] += (density_brick_force_x_loc[mz][my][mx]*x0/density_brick_counter_loc[mz][my][mx]);
+								f[i][1] += (density_brick_force_y_loc[mz][my][mx]*x0/density_brick_counter_loc[mz][my][mx]);
+								f[i][2] += (density_brick_force_z_loc[mz][my][mx]*x0/density_brick_counter_loc[mz][my][mx]);
 							}
 						}
 					}
@@ -649,15 +681,22 @@ void FixCondiff::set_grid_local()
 	//deallocate() framework taken from pppm.cpp
 void FixCondiff::deallocate()
 {
-	memory->destroy3d_offset(density_brick_velocity_x,nzlo_out,nylo_out,nxlo_out);
-	memory->destroy3d_offset(density_brick_counter_x,nzlo_out,nylo_out,nxlo_out);
-	memory->destroy3d_offset(density_brick_force_x,nzlo_out,nylo_out,nxlo_out);
-	memory->destroy3d_offset(density_brick_velocity_y,nzlo_out,nylo_out,nxlo_out);
-	memory->destroy3d_offset(density_brick_counter_y,nzlo_out,nylo_out,nxlo_out);
-	memory->destroy3d_offset(density_brick_force_y,nzlo_out,nylo_out,nxlo_out);
-	memory->destroy3d_offset(density_brick_velocity_z,nzlo_out,nylo_out,nxlo_out);
-	memory->destroy3d_offset(density_brick_counter_z,nzlo_out,nylo_out,nxlo_out);
-	memory->destroy3d_offset(density_brick_force_z,nzlo_out,nylo_out,nxlo_out);
+	memory->destroy3d_offset(density_brick_velocity_x_loc,nzlo_out,nylo_out,nxlo_out);
+	memory->destroy3d_offset(density_brick_force_x_loc,nzlo_out,nylo_out,nxlo_out);
+	memory->destroy3d_offset(density_brick_velocity_y_loc,nzlo_out,nylo_out,nxlo_out);
+	memory->destroy3d_offset(density_brick_force_y_loc,nzlo_out,nylo_out,nxlo_out);
+	memory->destroy3d_offset(density_brick_velocity_z_loc,nzlo_out,nylo_out,nxlo_out);
+	memory->destroy3d_offset(density_brick_force_z_loc,nzlo_out,nylo_out,nxlo_out);
+	
+	memory->destroy3d_offset(density_brick_velocity_x_glo,nzlo_out,nylo_out,nxlo_out);
+	memory->destroy3d_offset(density_brick_force_x_glo,nzlo_out,nylo_out,nxlo_out);
+	memory->destroy3d_offset(density_brick_velocity_y_glo,nzlo_out,nylo_out,nxlo_out);
+	memory->destroy3d_offset(density_brick_force_y_glo,nzlo_out,nylo_out,nxlo_out);
+	memory->destroy3d_offset(density_brick_velocity_z_glo,nzlo_out,nylo_out,nxlo_out);
+	memory->destroy3d_offset(density_brick_force_z_glo,nzlo_out,nylo_out,nxlo_out);
+	
+	memory->destroy3d_offset(density_brick_counter_loc,nzlo_out,nylo_out,nxlo_out);
+	memory->destroy3d_offset(density_brick_counter_glo,nzlo_out,nylo_out,nxlo_out);
 
 	memory->destroy2d_offset(rho1d,-order_allocated/2);
 	memory->destroy2d_offset(drho1d,-order_allocated/2);
@@ -666,31 +705,42 @@ void FixCondiff::deallocate()
 
 	memory->destroy(rand);
 
-	delete cg;
 
 }
 
     //allocate() framework taken from pppm.cpp
 void FixCondiff::allocate()
 {
-	memory->create3d_offset(density_brick_velocity_x,nzlo_out,nzhi_out,nylo_out,nyhi_out,
-                          nxlo_out,nxhi_out,"condiff:density_brick_velocity_x");
-	memory->create3d_offset(density_brick_counter_x,nzlo_out,nzhi_out,nylo_out,nyhi_out,
-	                          nxlo_out,nxhi_out,"condiff:density_brick_counter_x");
-	memory->create3d_offset(density_brick_force_x,nzlo_out,nzhi_out,nylo_out,nyhi_out,
-		                          nxlo_out,nxhi_out,"condiff:density_brick_force_x");
-	memory->create3d_offset(density_brick_velocity_y,nzlo_out,nzhi_out,nylo_out,nyhi_out,
-	                          nxlo_out,nxhi_out,"condiff:density_brick_velocity_y");
-	memory->create3d_offset(density_brick_counter_y,nzlo_out,nzhi_out,nylo_out,nyhi_out,
-		                          nxlo_out,nxhi_out,"condiff:density_brick_counter_y");
-	memory->create3d_offset(density_brick_force_y,nzlo_out,nzhi_out,nylo_out,nyhi_out,
-			                          nxlo_out,nxhi_out,"condiff:density_brick_force_y");
-	memory->create3d_offset(density_brick_velocity_z,nzlo_out,nzhi_out,nylo_out,nyhi_out,
-		                          nxlo_out,nxhi_out,"condiff:density_brick_velocity_z");
-	memory->create3d_offset(density_brick_counter_z,nzlo_out,nzhi_out,nylo_out,nyhi_out,
-			                          nxlo_out,nxhi_out,"condiff:density_brick_counter_z");
-	memory->create3d_offset(density_brick_force_z,nzlo_out,nzhi_out,nylo_out,nyhi_out,
-				                          nxlo_out,nxhi_out,"condiff:density_brick_force_z");
+	memory->create3d_offset(density_brick_velocity_x_loc,nzlo_out,nzhi_out,nylo_out,nyhi_out,
+                          nxlo_out,nxhi_out,"condiff:density_brick_velocity_x_loc");
+	memory->create3d_offset(density_brick_force_x_loc,nzlo_out,nzhi_out,nylo_out,nyhi_out,
+		                  nxlo_out,nxhi_out,"condiff:density_brick_force_x_loc");
+	memory->create3d_offset(density_brick_velocity_y_loc,nzlo_out,nzhi_out,nylo_out,nyhi_out,
+	                      nxlo_out,nxhi_out,"condiff:density_brick_velocity_y_loc");
+	memory->create3d_offset(density_brick_force_y_loc,nzlo_out,nzhi_out,nylo_out,nyhi_out,
+			              nxlo_out,nxhi_out,"condiff:density_brick_force_y_loc");
+	memory->create3d_offset(density_brick_velocity_z_loc,nzlo_out,nzhi_out,nylo_out,nyhi_out,
+		                  nxlo_out,nxhi_out,"condiff:density_brick_velocity_z_loc");
+	memory->create3d_offset(density_brick_force_z_loc,nzlo_out,nzhi_out,nylo_out,nyhi_out,
+				          nxlo_out,nxhi_out,"condiff:density_brick_force_z_loc");
+				                          
+	memory->create3d_offset(density_brick_velocity_x_glo,nzlo_out,nzhi_out,nylo_out,nyhi_out,
+                          nxlo_out,nxhi_out,"condiff:density_brick_velocity_x_glo");
+	memory->create3d_offset(density_brick_force_x_glo,nzlo_out,nzhi_out,nylo_out,nyhi_out,
+		                  nxlo_out,nxhi_out,"condiff:density_brick_force_x_glo");
+	memory->create3d_offset(density_brick_velocity_y_glo,nzlo_out,nzhi_out,nylo_out,nyhi_out,
+	                      nxlo_out,nxhi_out,"condiff:density_brick_velocity_y_glo");
+	memory->create3d_offset(density_brick_force_y_glo,nzlo_out,nzhi_out,nylo_out,nyhi_out,
+			              nxlo_out,nxhi_out,"condiff:density_brick_force_y_glo");
+	memory->create3d_offset(density_brick_velocity_z_glo,nzlo_out,nzhi_out,nylo_out,nyhi_out,
+		                  nxlo_out,nxhi_out,"condiff:density_brick_velocity_z_glo");
+	memory->create3d_offset(density_brick_force_z_glo,nzlo_out,nzhi_out,nylo_out,nyhi_out,
+				          nxlo_out,nxhi_out,"condiff:density_brick_force_z_glo");
+				                          
+	memory->create3d_offset(density_brick_counter_loc,nzlo_out,nzhi_out,nylo_out,nyhi_out,
+	                      nxlo_out,nxhi_out,"condiff:density_brick_counter_loc");
+	memory->create3d_offset(density_brick_counter_glo,nzlo_out,nzhi_out,nylo_out,nyhi_out,
+	                      nxlo_out,nxhi_out,"condiff:density_brick_counter_glo");
 
 	order_allocated = order;
 	memory->create2d_offset(rho1d,3,-order/2,order/2,"condiff:rho1d");
@@ -702,13 +752,9 @@ void FixCondiff::allocate()
 	memory->create(rand,3,"condiff:rand");
 
 	// create ghost grid object for rho and velocity field communication
-	int (*procneigh)[2] = comm->procneigh;
+	//int (*procneigh)[2] = comm->procneigh;
 
-    cg = new GridComm(lmp,world,3,1,
-                      nxlo_in,nxhi_in,nylo_in,nyhi_in,nzlo_in,nzhi_in,
-                      nxlo_out,nxhi_out,nylo_out,nyhi_out,nzlo_out,nzhi_out,
-                      procneigh[0][0],procneigh[0][1],procneigh[1][0],
-                      procneigh[1][1],procneigh[2][0],procneigh[2][1]);
+
 }
 
 	//check if pppm computation is used

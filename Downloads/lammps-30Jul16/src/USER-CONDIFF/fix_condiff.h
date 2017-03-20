@@ -46,6 +46,7 @@ class FixCondiff : public Fix {
     virtual void particle_map();
     virtual void make_rho();
     void reverse_make_rho();
+    void rho_decompose();
     void deallocate();
     void allocate();
     void compute_rho1d(const FFT_SCALAR &, const FFT_SCALAR &,
@@ -56,15 +57,24 @@ class FixCondiff : public Fix {
     void set_grid_local();
     void setup_grid();
 
-    FFT_SCALAR ***density_brick_velocity_x;
-    FFT_SCALAR ***density_brick_velocity_y;
-    FFT_SCALAR ***density_brick_velocity_z;
-    FFT_SCALAR ***density_brick_counter_x;
-    FFT_SCALAR ***density_brick_counter_y;
-    FFT_SCALAR ***density_brick_counter_z;
-    FFT_SCALAR ***density_brick_force_x;
-    FFT_SCALAR ***density_brick_force_y;
-    FFT_SCALAR ***density_brick_force_z;
+    FFT_SCALAR ***density_brick_velocity_x_loc;
+    FFT_SCALAR ***density_brick_velocity_y_loc;
+    FFT_SCALAR ***density_brick_velocity_z_loc;
+    
+    FFT_SCALAR ***density_brick_velocity_x_glo;
+    FFT_SCALAR ***density_brick_velocity_y_glo;
+    FFT_SCALAR ***density_brick_velocity_z_glo;
+
+    FFT_SCALAR ***density_brick_force_x_loc;
+    FFT_SCALAR ***density_brick_force_y_loc;
+    FFT_SCALAR ***density_brick_force_z_loc;
+    
+    FFT_SCALAR ***density_brick_force_x_glo;
+    FFT_SCALAR ***density_brick_force_y_glo;
+    FFT_SCALAR ***density_brick_force_z_glo;
+    
+    FFT_SCALAR ***density_brick_counter_loc;
+    FFT_SCALAR ***density_brick_counter_glo;
 
     double *rand;
 
@@ -72,7 +82,6 @@ class FixCondiff : public Fix {
 
     class GridComm *cg;
 
-    int **part2grid;
     int order, minorder, order_allocated;
 
     int jgroup, groupbit_condiff;
@@ -109,7 +118,8 @@ class FixCondiff : public Fix {
 
     int nmax;
 
-
+    double time1;
+    double time2;
 };
 
 
