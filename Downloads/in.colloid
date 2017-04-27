@@ -1,0 +1,106 @@
+# LAMMPS input script for colloid diffusion
+# calculates time correlation functions and memory function
+
+##############################
+# set input values
+##############################
+
+# box
+variable	box_size equal 24
+
+# system paramter
+variable        T equal 1.0
+variable	rho_solvent equal 0.8
+variable 	dt equal 0.001
+
+# colloid
+variable	R equal 3
+
+# lj
+variable	rcut_lj equal 2.5
+
+# simulation
+variable	eq_steps equal 10000
+variable	sim_steps equal 0
+
+
+##############################
+# calculate system variables
+##############################
+
+
+##############################
+# system setup
+##############################
+
+# lj 3d solvent
+units		lj
+dimension	3
+atom_style	full
+timestep	${dt}
+
+# create lattice (to place particles), simulation box
+region 		sphere sphere ${R} ${R} ${R} ${R}
+lattice         fcc ${rho_solvent}
+region          simbox block 0 ${box_size} 0 ${box_size} 0 ${box_size}
+boundary 	p p p
+create_box      2 simbox
+
+# create particles
+create_atoms	1 box
+
+# colloid
+set 		region sphere type 2
+group		colloid type 2
+fix 		2 colloid rigid/nve group 1 colloid
+
+# solvent
+group		solvent type 1
+
+# initialize particles
+mass            1 1.0
+mass            2 1.0
+
+##############################
+# interactions
+##############################
+
+pair_style      lj/cut ${rcut_lj}
+pair_coeff	1 * 1.0 1.0
+pair_coeff	2 2 1.0 1.0 1.12246
+
+##############################
+# equilibration
+##############################
+
+# assign random velcities velocities
+velocity        all create $T 95287
+
+fix		1 solvent nve
+fix		3 solvent langevin $T $T 0.1 36837
+fix 		mom all momentum 1 linear 1 1 1
+thermo          100
+
+run 		${eq_steps}
+unfix		3
+unfix		mom
+reset_timestep  0
+
+
+##############################
+# define on-the-fly calculations
+##############################
+
+
+
+##############################
+# production run
+##############################
+
+thermo          1000
+run	        ${sim_steps}
+
+##############################
+# write restart
+##############################
+write_restart restart.colloid.*
