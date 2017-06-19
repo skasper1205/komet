@@ -36,6 +36,7 @@ class FixCondiff : public Fix {
 	~FixCondiff();
 	int setmask();
 	void post_force(int);
+	void final_integrate();
 	void kspace_check();
     void pppm_check();
     void apply_boundary_conditions();
