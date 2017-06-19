@@ -159,8 +159,11 @@ void FixDipoleMoment::calc_dipole_moment()
 	double R = 3;
 	double r = 1;
 	
-	double p = 0;
+	double p1 = 0;
+	double p2 = 0;
 	double p_glo = 0;
+	double p1_glo = 0;
+	double p2_glo = 0;
 
 	double x_help;
 	double y_help;
@@ -170,7 +173,7 @@ void FixDipoleMoment::calc_dipole_moment()
 
 	  for (int i = 0; i < nlocal; i++) {
 
-	    if(mask[i] & groupbit_coions || mask[i] & groupbit_counterions){
+	    if(mask[i] & groupbit_coions){
 	      x_help = fabs(x[i][0]-cm[0]);
 	      y_help = fabs(x[i][1]-cm[1]);
 	      z_help = fabs(x[i][2]-cm[2]);
@@ -179,17 +182,35 @@ void FixDipoleMoment::calc_dipole_moment()
 	      
 	      
 	      if(R <= sqrt(pow(x_help,2)+pow(y_help,2)+pow(z_help,2)) && sqrt(pow(x_help,2)+pow(y_help,2)+pow(z_help,2)) < R+r){
-			p += q[i]*x_help;
+			p1 += q[i]*x_help;
+	      }
+	    }
+	    if(mask[i] & groupbit_counterions){
+	      x_help = fabs(x[i][0]-cm[0]);
+	      y_help = fabs(x[i][1]-cm[1]);
+	      z_help = fabs(x[i][2]-cm[2]);
+	      
+	      domain->minimum_image(x_help,y_help,z_help);
+	      
+	      
+	      if(R <= sqrt(pow(x_help,2)+pow(y_help,2)+pow(z_help,2)) && sqrt(pow(x_help,2)+pow(y_help,2)+pow(z_help,2)) < R+r){
+			p2 += q[i]*x_help;
 	      }
 	    }
 	  }
-	  MPI_Allreduce(&p, &p_glo, 1, MPI_DOUBLE, MPI_SUM, world);
+	  MPI_Allreduce(&p1, &p1_glo, 1, MPI_DOUBLE, MPI_SUM, world);
+	  MPI_Allreduce(&p2, &p2_glo, 1, MPI_DOUBLE, MPI_SUM, world);
+	  p_glo = p1_glo - p2_glo;
+	  
 	  if (me == 0) {
 	  	//p_glo = p_glo/(nprocs);
 	  	fprintf(file,"%f\t%f\n",R,p_glo);
 	  }
-	  p = 0;
+	  p1 = 0;
+	  p2 = 0;
 	  p_glo = 0;
+	  p1_glo = 0;
+	  p2_glo = 0;
 	  R+=r;
    	}
 }
