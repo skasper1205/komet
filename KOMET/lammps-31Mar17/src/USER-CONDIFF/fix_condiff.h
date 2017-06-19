@@ -38,8 +38,8 @@ class FixCondiff : public Fix {
 	void post_force(int);
 	void final_integrate();
 	void kspace_check();
-    void pppm_check();
-    void apply_boundary_conditions();
+    	void pppm_check();
+    	void apply_boundary_conditions();
 
 
   protected:
@@ -47,6 +47,7 @@ class FixCondiff : public Fix {
     virtual void particle_map();
     virtual void make_rho();
     void reverse_make_rho();
+    void euler_step();
     void deallocate();
     void allocate();
     void compute_rho1d(const FFT_SCALAR &, const FFT_SCALAR &,
