@@ -200,7 +200,7 @@ void FixDipoleMoment::calc_dipole_moment()
 	  }
 	  MPI_Allreduce(&p1, &p1_glo, 1, MPI_DOUBLE, MPI_SUM, world);
 	  MPI_Allreduce(&p2, &p2_glo, 1, MPI_DOUBLE, MPI_SUM, world);
-	  p_glo = p1_glo - p2_glo;
+	  p_glo = p1_glo + p2_glo;
 	  
 	  if (me == 0) {
 	  	//p_glo = p_glo/(nprocs);
